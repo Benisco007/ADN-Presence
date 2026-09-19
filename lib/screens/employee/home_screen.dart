@@ -1,10 +1,16 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/user_model.dart';
 import '../../services/presence_service.dart';
 import '../../services/location_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/config_service.dart';
+import '../../services/wifi_check_service.dart';
 import '../auth/login_screen.dart';
+import '../admin/security_screen.dart';
+import '../common/help_center_screen.dart';
+import '../../services/tutorial_service.dart';
 import 'history_screen.dart';
 import 'qr_scanner_screen.dart';
 
@@ -31,6 +37,16 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _verifierPresence();
+    _verifierTutoriel();
+  }
+
+  Future<void> _verifierTutoriel() async {
+    bool hasSeen = await TutorialService.hasSeenTutorial(isAdmin: false);
+    if (!hasSeen && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        TutorialService.showTutorialDialog(context, isAdmin: false);
+      });
+    }
   }
 
   Future<void> _verifierPresence() async {
@@ -38,6 +54,38 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() => _dejaMarque = marque);
     }
+    // Synchroniser avec le Kotlin
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('deja_marque', marque);
+    if (!marque) {
+      await prefs.setBool('etat_au_bureau', false);
+    } else if (!prefs.containsKey('etat_au_bureau')) {
+      await prefs.setBool('etat_au_bureau', true);
+    }
+    // Forcer une vérification immédiate pour mettre à jour la notification
+    if (!kIsWeb) {
+      await WifiCheckService.checkNow();
+    }
+  }
+
+  // ── Affiche un SnackBar quand la permission GPS est refusée (web) ──
+  void _snackBarPermissionRefusee() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 8),
+        content: const Text(
+          'Veuillez autoriser la localisation dans votre navigateur pour marquer votre présence.',
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        action: SnackBarAction(
+          label: 'Réessayer',
+          textColor: Colors.white,
+          onPressed: _marquerPresenceManuellement,
+        ),
+      ),
+    );
   }
 
   Future<void> _marquerPresenceManuellement() async {
@@ -58,12 +106,22 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    bool auBureau = await _locationService.estAuBureau();
-    if (!auBureau) {
+    final result = await _locationService.estAuBureauAvecDetails();
+
+    if (!result.dansLaZone) {
+      // Permission navigateur refusée → SnackBar spécial avec bouton Réessayer
+      if (result.message == LocationService.msgPermissionRefusee) {
+        setState(() {
+          _isLoading = false;
+          _message = result.message;
+          _messageColor = Colors.red;
+        });
+        _snackBarPermissionRefusee();
+        return;
+      }
       setState(() {
         _isLoading = false;
-        _message =
-            'Marquage refusé : vous n\'êtes pas dans la zone du bureau (WiFi ou GPS).';
+        _message = result.message;
         _messageColor = Colors.red;
       });
       return;
@@ -75,7 +133,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoading = false;
       if (succes) {
         _dejaMarque = true;
-        _message = 'Présence marquée manuellement ✅';
+        _message = result.message.contains('✅')
+            ? result.message
+            : 'Présence marquée manuellement ✅';
         _messageColor = Colors.green;
       } else {
         _message = 'Erreur lors du marquage.';
@@ -102,28 +162,40 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    bool auBureau = await _locationService.estAuBureau();
+    final result = await _locationService.estAuBureauAvecDetails();
 
-    if (auBureau) {
-      bool succes = await _presenceService.marquerPresence('automatique');
-      setState(() {
-        _isLoading = false;
-        if (succes) {
-          _dejaMarque = true;
-          _message = 'Présence automatique marquée ✅';
-          _messageColor = Colors.green;
-        } else {
-          _message = 'Erreur lors du marquage.';
+    if (!result.dansLaZone) {
+      if (result.message == LocationService.msgPermissionRefusee) {
+        setState(() {
+          _isLoading = false;
+          _message = result.message;
           _messageColor = Colors.red;
-        }
-      });
-    } else {
+        });
+        _snackBarPermissionRefusee();
+        return;
+      }
       setState(() {
         _isLoading = false;
-        _message = 'Vous n\'êtes pas dans la zone du bureau.';
+        _message = result.message;
         _messageColor = Colors.red;
       });
+      return;
     }
+
+    bool succes = await _presenceService.marquerPresence('automatique');
+    setState(() {
+      _isLoading = false;
+      if (succes) {
+        _dejaMarque = true;
+        _message = result.message.contains('✅')
+            ? result.message
+            : 'Présence automatique marquée ✅';
+        _messageColor = Colors.green;
+      } else {
+        _message = 'Erreur lors du marquage.';
+        _messageColor = Colors.red;
+      }
+    });
   }
 
   Future<void> _deconnexion() async {
@@ -136,7 +208,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ── Interface Mode WiFi/GPS (Phase 1 conservée) ──
+  // ── Interface Mode WiFi/GPS ──
+  // Sur web : GPS via l'API Geolocation du navigateur (permission popup).
+  // Sur mobile : WiFi + GPS natif.
   Widget _interfaceWifiGps() {
     return Column(
       children: [
@@ -265,6 +339,30 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('ADN Presence',
             style: TextStyle(color: Colors.white)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline, color: Colors.white),
+            tooltip: 'Centre d\'Aide & FAQ',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const HelpCenterScreen(isAdmin: false),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.security, color: Colors.white),
+            tooltip: 'Sécurité & Mot de passe',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const SecurityScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white),
             onPressed: _deconnexion,

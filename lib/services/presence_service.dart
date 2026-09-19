@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/presence_model.dart';
+import 'wifi_check_service.dart';
 
 class PresenceService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -60,6 +63,16 @@ class PresenceService {
         'heureSortieDefinitive': null,
       });
 
+      // Synchroniser avec SharedPreferences pour le receiver Kotlin
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('deja_marque', true);
+      await prefs.setBool('etat_au_bureau', true);
+
+      // Déclencher une vérification immédiate → met à jour la notification
+      if (!kIsWeb) {
+        await WifiCheckService.checkNow();
+      }
+
       return true;
     } catch (e) {
       return false;
@@ -69,7 +82,8 @@ class PresenceService {
   // ── SUIVI DES MOUVEMENTS ──
 
   // Enregistrer une sortie de zone
-  Future<void> enregistrerSortie() async {
+  // [heureReelle] : heure réelle de l'événement (utilisée lors de la sync différée)
+  Future<void> enregistrerSortie({DateTime? heureReelle}) async {
     try {
       final doc = await _presenceDuJour();
       if (doc == null) return; // Pas de présence marquée aujourd'hui
@@ -84,9 +98,9 @@ class PresenceService {
       });
       if (dejaSorti) return; // Sortie déjà enregistrée, pas de doublon
 
-      final maintenant = DateTime.now();
+      final heure = heureReelle ?? DateTime.now();
       final nouveauMouvement = {
-        'sortie': Timestamp.fromDate(maintenant),
+        'sortie': Timestamp.fromDate(heure),
         'retour': null,
       };
 
@@ -99,7 +113,8 @@ class PresenceService {
   }
 
   // Enregistrer un retour dans la zone
-  Future<void> enregistrerRetour() async {
+  // [heureReelle] : heure réelle de l'événement (utilisée lors de la sync différée)
+  Future<void> enregistrerRetour({DateTime? heureReelle}) async {
     try {
       final doc = await _presenceDuJour();
       if (doc == null) return;
@@ -118,12 +133,11 @@ class PresenceService {
       }
       if (indexSansRetour == -1) return; // Pas de sortie en cours
 
-      final maintenant = DateTime.now();
-      mouvementsRaw[indexSansRetour]['retour'] =
-          Timestamp.fromDate(maintenant);
+      final heure = heureReelle ?? DateTime.now();
+      mouvementsRaw[indexSansRetour]['retour'] = Timestamp.fromDate(heure);
 
       // Calculer les heures sup si après 18h
-      await _calculerHeuresSup(doc.id, mouvementsRaw, maintenant);
+      await _calculerHeuresSup(doc.id, mouvementsRaw, heure);
 
       await _firestore.collection('presences').doc(doc.id).update({
         'mouvements': mouvementsRaw,

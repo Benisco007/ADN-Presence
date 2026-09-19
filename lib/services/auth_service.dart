@@ -56,4 +56,41 @@ class AuthService {
       return null;
     }
   }
+
+  Future<Map<String, dynamic>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      User? user = _auth.currentUser;
+      if (user == null || user.email == null) {
+        return {'success': false, 'message': 'Utilisateur non connecté.'};
+      }
+
+      // 1. Re-authentification avec l'ancien mot de passe
+      AuthCredential credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: currentPassword,
+      );
+
+      await user.reauthenticateWithCredential(credential);
+
+      // 2. Mise à jour du mot de passe dans Firebase Auth
+      await user.updatePassword(newPassword);
+
+      return {'success': true, 'message': 'Mot de passe modifié avec succès.'};
+    } on FirebaseAuthException catch (e) {
+      String message = 'Erreur lors du changement de mot de passe.';
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        message = 'L\'ancien mot de passe est incorrect.';
+      } else if (e.code == 'weak-password') {
+        message = 'Le nouveau mot de passe est trop faible (minimum 6 caractères).';
+      } else if (e.code == 'requires-recent-login') {
+        message = 'Veuillez vous re-connecter puis réessayer.';
+      }
+      return {'success': false, 'message': message};
+    } catch (e) {
+      return {'success': false, 'message': 'Une erreur inattendue est survenue.'};
+    }
+  }
 }

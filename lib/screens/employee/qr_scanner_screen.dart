@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/qr_service.dart';
@@ -10,16 +11,37 @@ class QrScannerScreen extends StatefulWidget {
   State<QrScannerScreen> createState() => _QrScannerScreenState();
 }
 
-class _QrScannerScreenState extends State<QrScannerScreen> {
+class _QrScannerScreenState extends State<QrScannerScreen>
+    with SingleTickerProviderStateMixin {
   final QrService _qrService = QrService();
   final PresenceService _presenceService = PresenceService();
   final MobileScannerController _cameraController = MobileScannerController();
+
+  late AnimationController _animationController;
+  late Animation<double> _scanAnimation;
 
   bool _enTraitement = false;
   bool _scanTermine = false;
 
   @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    );
+    _scanAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: Curves.easeInOut,
+      ),
+    );
+    _animationController.repeat(reverse: true);
+  }
+
+  @override
   void dispose() {
+    _animationController.dispose();
     _cameraController.dispose();
     super.dispose();
   }
@@ -71,7 +93,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     } else {
       _afficherResultat(
         succes: false,
-        message: 'Erreur lors du marquage. Réessayez.',
+        message: 'Erreur lors du marquage. Réessayer.',
         icone: Icons.error_outline,
         couleur: Colors.red,
       );
@@ -154,10 +176,11 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
         ),
         actions: [
           // Bouton torche
-          IconButton(
-            icon: const Icon(Icons.flashlight_on, color: Colors.white),
-            onPressed: () => _cameraController.toggleTorch(),
-          ),
+          if (!kIsWeb)
+            IconButton(
+              icon: const Icon(Icons.flashlight_on, color: Colors.white),
+              onPressed: () => _cameraController.toggleTorch(),
+            ),
         ],
       ),
       body: Stack(
@@ -173,24 +196,21 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             },
           ),
 
-          // ── Overlay de visée ──
-          Center(
-            child: Container(
-              width: 260,
-              height: 260,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.purple, width: 3),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Stack(
-                children: [
-                  // Coins décoratifs
-                  _coin(top: 0, left: 0),
-                  _coin(top: 0, right: 0, flipH: true),
-                  _coin(bottom: 0, left: 0, flipV: true),
-                  _coin(bottom: 0, right: 0, flipH: true, flipV: true),
-                ],
-              ),
+          // ── Overlay de visée animé professionnel ──
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _scanAnimation,
+              builder: (context, child) {
+                return CustomPaint(
+                  painter: ScannerOverlayPainter(
+                    borderColor: const Color(0xFFAB47BC),
+                    borderRadius: 18,
+                    borderLength: 36,
+                    borderWidth: 4.5,
+                    scanLinePosition: _scanAnimation.value,
+                  ),
+                );
+              },
             ),
           ),
 
@@ -202,10 +222,13 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             child: Column(
               children: [
                 if (_enTraitement)
-                  const CircularProgressIndicator(color: Colors.purple)
+                  const CircularProgressIndicator(color: Color(0xFFAB47BC))
                 else
-                  const Icon(Icons.qr_code_scanner,
-                      color: Colors.white54, size: 32),
+                  const Icon(
+                    Icons.qr_code_scanner,
+                    color: Colors.white70,
+                    size: 36,
+                  ),
                 const SizedBox(height: 12),
                 Text(
                   _enTraitement
@@ -221,40 +244,197 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               ],
             ),
           ),
+
+          // ── Saisie manuelle (Fallback Web) ──
+          if (kIsWeb)
+            Positioned(
+              top: 20,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        decoration: const InputDecoration(
+                          hintText: 'Saisir le code manuellement',
+                          border: InputBorder.none,
+                          isDense: true,
+                        ),
+                        onSubmitted: (value) {
+                          if (value.isNotEmpty) _traiterQrCode(value);
+                        },
+                      ),
+                    ),
+                    const Icon(Icons.keyboard_return, color: Colors.grey),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
+}
 
-  // Coin décoratif du cadre de visée
-  Widget _coin({
-    double? top,
-    double? bottom,
-    double? left,
-    double? right,
-    bool flipH = false,
-    bool flipV = false,
-  }) {
-    return Positioned(
-      top: top,
-      bottom: bottom,
-      left: left,
-      right: right,
-      child: Transform(
-        alignment: Alignment.center,
-        transform: Matrix4.identity()
-          ..scale(flipH ? -1.0 : 1.0, flipV ? -1.0 : 1.0),
-        child: Container(
-          width: 24,
-          height: 24,
-          decoration: const BoxDecoration(
-            border: Border(
-              top: BorderSide(color: Colors.purple, width: 4),
-              left: BorderSide(color: Colors.purple, width: 4),
-            ),
-          ),
-        ),
-      ),
+// ── CustomPainter pour le viseur scanner haut de gamme avec laser animé ──
+class ScannerOverlayPainter extends CustomPainter {
+  final Color borderColor;
+  final double borderRadius;
+  final double borderLength;
+  final double borderWidth;
+  final double scanLinePosition;
+
+  ScannerOverlayPainter({
+    required this.borderColor,
+    required this.borderRadius,
+    required this.borderLength,
+    required this.borderWidth,
+    required this.scanLinePosition,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scanSize = size.width * 0.70;
+    final scanRect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2 - 30),
+      width: scanSize,
+      height: scanSize,
     );
+    final rrect = RRect.fromRectAndRadius(scanRect, Radius.circular(borderRadius));
+
+    // 1. Masque sombre extérieur
+    final backgroundPath = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final cutoutPath = Path()..addRRect(rrect);
+    final overlayPath = Path.combine(PathOperation.difference, backgroundPath, cutoutPath);
+
+    final overlayPaint = Paint()..color = Colors.black.withValues(alpha: 0.65);
+    canvas.drawPath(overlayPath, overlayPaint);
+
+    // 2. Fine bordure de cadrage guide
+    final guideBorderPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRRect(rrect, guideBorderPaint);
+
+    // 3. Dessin du laser de balayage animé (délimité à l'intérieur du cadre)
+    canvas.save();
+    canvas.clipRRect(rrect);
+
+    final currentY = scanRect.top + (scanRect.height * scanLinePosition);
+
+    // Faisceau d'ombrage du laser
+    const beamHeight = 45.0;
+    final beamPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          borderColor.withValues(alpha: 0.0),
+          borderColor.withValues(alpha: 0.28),
+          borderColor.withValues(alpha: 0.0),
+        ],
+      ).createShader(
+        Rect.fromLTRB(
+          scanRect.left,
+          currentY - beamHeight / 2,
+          scanRect.right,
+          currentY + beamHeight / 2,
+        ),
+      );
+
+    canvas.drawRect(
+      Rect.fromLTRB(
+        scanRect.left,
+        currentY - beamHeight / 2,
+        scanRect.right,
+        currentY + beamHeight / 2,
+      ),
+      beamPaint,
+    );
+
+    // Ligne principale filigrane lumineuse
+    final linePaint = Paint()
+      ..shader = LinearGradient(
+        colors: [
+          borderColor.withValues(alpha: 0.05),
+          const Color(0xFFE1BEE7),
+          Colors.white,
+          const Color(0xFFE1BEE7),
+          borderColor.withValues(alpha: 0.05),
+        ],
+        stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
+      ).createShader(
+        Rect.fromLTWH(scanRect.left, currentY - 1.5, scanRect.width, 3),
+      )
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawLine(
+      Offset(scanRect.left + 4, currentY),
+      Offset(scanRect.right - 4, currentY),
+      linePaint,
+    );
+
+    canvas.restore();
+
+    // 4. Dessin des 4 coins d'angle arrondis (tracés correctement vers l'extérieur)
+    final cornerPaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = borderWidth
+      ..strokeCap = StrokeCap.round;
+
+    final left = scanRect.left;
+    final right = scanRect.right;
+    final top = scanRect.top;
+    final bottom = scanRect.bottom;
+    final r = borderRadius;
+    final l = borderLength;
+
+    // Coin Haut-Gauche
+    final topLeftPath = Path()
+      ..moveTo(left, top + l)
+      ..lineTo(left, top + r)
+      ..arcToPoint(Offset(left + r, top), radius: Radius.circular(r), clockwise: true)
+      ..lineTo(left + l, top);
+    canvas.drawPath(topLeftPath, cornerPaint);
+
+    // Coin Haut-Droit
+    final topRightPath = Path()
+      ..moveTo(right - l, top)
+      ..lineTo(right - r, top)
+      ..arcToPoint(Offset(right, top + r), radius: Radius.circular(r), clockwise: true)
+      ..lineTo(right, top + l);
+    canvas.drawPath(topRightPath, cornerPaint);
+
+    // Coin Bas-Droit
+    final bottomRightPath = Path()
+      ..moveTo(right, bottom - l)
+      ..lineTo(right, bottom - r)
+      ..arcToPoint(Offset(right - r, bottom), radius: Radius.circular(r), clockwise: true)
+      ..lineTo(right - l, bottom);
+    canvas.drawPath(bottomRightPath, cornerPaint);
+
+    // Coin Bas-Gauche
+    final bottomLeftPath = Path()
+      ..moveTo(left + l, bottom)
+      ..lineTo(left + r, bottom)
+      ..arcToPoint(Offset(left, bottom - r), radius: Radius.circular(r), clockwise: true)
+      ..lineTo(left, bottom - l);
+    canvas.drawPath(bottomLeftPath, cornerPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant ScannerOverlayPainter oldDelegate) {
+    return oldDelegate.scanLinePosition != scanLinePosition ||
+        oldDelegate.borderColor != borderColor;
   }
 }

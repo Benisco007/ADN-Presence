@@ -9,6 +9,11 @@ import 'employees_screen.dart';
 import 'history_admin_screen.dart';
 import 'parks_screen.dart';
 import 'reports_screen.dart';
+import 'security_screen.dart';
+import 'park_detail_screen.dart';
+import '../common/help_center_screen.dart';
+import '../../services/tutorial_service.dart';
+import '../../widgets/contextual_help_button.dart';
 
 class DashboardScreen extends StatefulWidget {
   final UserModel currentUser;
@@ -42,58 +47,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '${now.day} ${mois[now.month - 1]} ${now.year}';
   }
 
-  String _formatHeure(DateTime dt) {
-    return '${dt.hour.toString().padLeft(2, '0')}h${dt.minute.toString().padLeft(2, '0')}';
+  @override
+  void initState() {
+    super.initState();
+    _verifierTutoriel();
   }
 
-  // ── Dialogue correction heure d'arrivée ──
-  Future<void> _corrigerHeure(PresenceModel presence, UserModel employe) async {
-    TimeOfDay heureActuelle = TimeOfDay(
-      hour: presence.heureArrivee.hour,
-      minute: presence.heureArrivee.minute,
-    );
-
-    final TimeOfDay? nouvelleHeure = await showTimePicker(
-      context: context,
-      initialTime: heureActuelle,
-      helpText: 'Corriger l\'heure d\'arrivée de ${employe.prenom}',
-      confirmText: 'Confirmer',
-      cancelText: 'Annuler',
-    );
-
-    if (nouvelleHeure == null || !mounted) return;
-
-    final DateTime heureCorrigee = DateTime(
-      presence.heureArrivee.year,
-      presence.heureArrivee.month,
-      presence.heureArrivee.day,
-      nouvelleHeure.hour,
-      nouvelleHeure.minute,
-    );
-
-    try {
-      await _firestore.collection('presences').doc(presence.id).update({
-        'heureArrivee': Timestamp.fromDate(heureCorrigee),
+  Future<void> _verifierTutoriel() async {
+    bool hasSeen = await TutorialService.hasSeenTutorial(isAdmin: true);
+    if (!hasSeen && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        TutorialService.showTutorialDialog(context, isAdmin: true);
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Heure d\'arrivée de ${employe.prenom} corrigée à ${nouvelleHeure.hour.toString().padLeft(2, '0')}h${nouvelleHeure.minute.toString().padLeft(2, '0')}',
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Erreur lors de la correction.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
     }
   }
 
@@ -105,8 +70,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: const Color(0xFF1A73E8),
         title: const Text('Dashboard Admin',
             style: TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: const [
+          ContextualHelpButton(
+            title: 'Tableau de Bord Administrateur',
+            description:
+                'Cet écran affiche le nombre total de présences aujourd\'hui ainsi que vos parcs.\n\nCliquez sur n\'importe quel parc pour afficher la liste détaillée des employés, leurs heures d\'arrivée, leurs pauses et leurs heures supplémentaires.',
+            tips: [
+              'Consultez l\'onglet "Sécurité" dans le menu pour changer votre mot de passe.',
+              'Consultez "Aide & FAQ" dans le menu pour voir les questions fréquentes ou relancer la visite guidée.',
+            ],
+            iconColor: Colors.white,
+          ),
+        ],
       ),
-      drawer: Drawer(
+      drawer: MediaQuery.of(context).size.width >= 900 ? null : Drawer(
         child: SafeArea(
           child: ListView(
             padding: EdgeInsets.zero,
@@ -167,6 +145,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const Divider(),
               ListTile(
+                leading: const Icon(Icons.help_outline, color: Color(0xFF1A73E8)),
+                title: const Text('Aide & FAQ'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const HelpCenterScreen(isAdmin: true)));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.security),
+                title: const Text('Sécurité'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const SecurityScreen()));
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.logout, color: Colors.red),
                 title: const Text('Déconnexion'),
                 onTap: _deconnexion,
@@ -210,7 +210,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             builder: (context, snapshot) {
               int presents = 0;
               int manuels = 0;
-              int heuresSup = 0;
 
               if (snapshot.hasData) {
                 DateTime aujourd = DateTime.now();
@@ -224,32 +223,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 presents = aujourdhui.length;
                 manuels =
                     aujourdhui.where((p) => p.type == 'manuel').length;
-                heuresSup = aujourdhui.fold(
-                    0, (sum, p) => sum + p.heuresSupplementaires);
               }
 
               return Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    _carteCompteur('Présents', presents.toString(),
-                        Colors.green, Icons.check_circle),
-                    const SizedBox(width: 8),
-                    _carteCompteur('Manuels', manuels.toString(),
-                        Colors.orange, Icons.edit),
-                    const SizedBox(width: 8),
-                    _carteCompteur(
-                        'Heures sup',
-                        '${heuresSup}min',
-                        Colors.purple,
-                        Icons.more_time),
+                    Expanded(
+                      child: _carteCompteur('Présents', presents.toString(),
+                          Colors.green, Icons.check_circle),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _carteCompteur('Manuels', manuels.toString(),
+                          Colors.orange, Icons.edit),
+                    ),
                   ],
                 ),
               );
             },
           ),
 
-          // ── Liste employés par parc ──
+          // ── Liste des Parcs ──
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: _firestore
@@ -296,56 +291,73 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           .add(employee);
                     }
 
-                    return StreamBuilder<List<PresenceModel>>(
-                      stream: _presenceService.toutesLesPresences(),
-                      builder: (context, presenceSnapshot) {
-                        List<PresenceModel> presencesAujourdhui = [];
-                        if (presenceSnapshot.hasData) {
-                          DateTime aujourd = DateTime.now();
-                          presencesAujourdhui =
-                              presenceSnapshot.data!.where((p) {
-                            return p.date.year == aujourd.year &&
-                                p.date.month == aujourd.month &&
-                                p.date.day == aujourd.day;
-                          }).toList();
-                        }
+                    return ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: parks.length +
+                          (grouped['']?.isNotEmpty == true ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        final hasUnassigned =
+                            grouped['']?.isNotEmpty == true;
+                        final isUnassignedCard =
+                            hasUnassigned && index == parks.length;
+                        final parkId = isUnassignedCard
+                            ? ''
+                            : parks[index]['id'] as String;
+                        final parkName = isUnassignedCard
+                            ? 'Employés sans parc'
+                            : parks[index]['nom'] as String;
+                        final parkEmployees =
+                            grouped[parkId] ?? [];
 
-                        return ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16),
-                          itemCount: parks.length +
-                              (grouped['']?.isNotEmpty == true ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            final hasUnassigned =
-                                grouped['']?.isNotEmpty == true;
-                            final isUnassignedCard =
-                                hasUnassigned && index == parks.length;
-                            final parkId = isUnassignedCard
-                                ? ''
-                                : parks[index]['id'] as String;
-                            final parkName = isUnassignedCard
-                                ? 'Employés sans parc'
-                                : parks[index]['nom'] as String;
-                            final parkEmployees =
-                                grouped[parkId] ?? [];
-
-                            return Card(
-                              margin:
-                                  const EdgeInsets.only(bottom: 10),
-                              child: ExpansionTile(
-                                leading:
-                                    const Icon(Icons.location_city),
-                                title: Text(parkName),
-                                subtitle: Text(
-                                    '${parkEmployees.length} employé(s)'),
-                                children: parkEmployees
-                                    .map((employee) => _employeeTile(
-                                        employee,
-                                        presencesAujourdhui))
-                                    .toList(),
+                        return Card(
+                          elevation: 0,
+                          color: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 6),
+                            leading: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1A73E8).withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                            );
-                          },
+                              child: const Icon(
+                                Icons.location_city,
+                                color: Color(0xFF1A73E8),
+                              ),
+                            ),
+                            title: Text(
+                              parkName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '${parkEmployees.length} employé(s) affecté(s)',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                            trailing: const Icon(
+                              Icons.arrow_forward_ios,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ParkDetailScreen(
+                                    parkId: parkId,
+                                    parkName: parkName,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         );
                       },
                     );
@@ -356,150 +368,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  // ── Carte employé enrichie ──
-  Widget _employeeTile(
-    UserModel employe,
-    List<PresenceModel> presencesAujourdhui,
-  ) {
-    PresenceModel? presence;
-    for (final item in presencesAujourdhui) {
-      if (item.userId == employe.id) {
-        presence = item;
-        break;
-      }
-    }
-
-    var couleur = Colors.red;
-    var statut = 'Absent';
-    var icone = Icons.cancel;
-    if (presence != null) {
-      if (presence.type == 'automatique') {
-        couleur = Colors.green;
-        statut = '✅ Auto';
-        icone = Icons.check_circle;
-      } else if (presence.type == 'qr_code') {
-        couleur = Colors.purple;
-        statut = '🟣 QR Code';
-        icone = Icons.qr_code;
-      } else {
-        couleur = Colors.orange;
-        statut = '🟠 Manuel';
-        icone = Icons.edit;
-      }
-    }
-
-    return Column(
-      children: [
-        ListTile(
-          leading: CircleAvatar(
-            backgroundColor: couleur.withOpacity(0.15),
-            child: Text(
-              employe.prenom.isEmpty
-                  ? '?'
-                  : employe.prenom[0].toUpperCase(),
-              style: TextStyle(
-                  color: couleur, fontWeight: FontWeight.bold),
-            ),
-          ),
-          title: Text('${employe.prenom} ${employe.nom}'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(employe.poste),
-              if (presence != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  'Arrivée : ${_formatHeure(presence.heureArrivee)}',
-                  style: const TextStyle(
-                      fontSize: 12, color: Colors.black54),
-                ),
-                // Heures supplémentaires
-                if (presence.heuresSupplementaires > 0)
-                  Text(
-                    '⏰ +${presence.heuresSupplementaires} min sup',
-                    style: const TextStyle(
-                        fontSize: 12, color: Colors.purple),
-                  ),
-              ],
-            ],
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icone, color: couleur, size: 16),
-              const SizedBox(width: 4),
-              Text(statut,
-                  style: TextStyle(color: couleur, fontSize: 12)),
-              // Bouton correction heure
-              if (presence != null)
-                IconButton(
-                  icon: const Icon(Icons.edit_calendar,
-                      size: 18, color: Colors.blueGrey),
-                  tooltip: 'Corriger l\'heure',
-                  onPressed: () => _corrigerHeure(presence!, employe),
-                ),
-            ],
-          ),
-        ),
-
-        // ── Mouvements de la journée ──
-        if (presence != null && presence.mouvements.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(
-                left: 72, right: 16, bottom: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Mouvements du jour :',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black54),
-                ),
-                const SizedBox(height: 4),
-                ...presence.mouvements.map((m) => Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.arrow_circle_right,
-                              size: 14, color: Colors.red),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Sortie : ${_formatHeure(m.sortie)}',
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.red),
-                          ),
-                          if (m.retour != null) ...[
-                            const SizedBox(width: 12),
-                            const Icon(Icons.arrow_circle_left,
-                                size: 14, color: Colors.green),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Retour : ${_formatHeure(m.retour!)}',
-                              style: const TextStyle(
-                                  fontSize: 12, color: Colors.green),
-                            ),
-                          ] else
-                            const Text(
-                              '  (pas encore rentré)',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.orange,
-                                  fontStyle: FontStyle.italic),
-                            ),
-                        ],
-                      ),
-                    )),
-              ],
-            ),
-          ),
-
-        const Divider(height: 1),
-      ],
     );
   }
 

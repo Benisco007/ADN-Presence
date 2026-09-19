@@ -1,14 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'location_service.dart';
 
 class QrService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final LocationService _locationService = LocationService();
 
-  // Vérifier si le QR Code scanné est valide
   Future<QrVerificationResult> verifierQrCode(String qrCodeScanne) async {
     try {
-      // 1. Récupérer le parcId de l'employé connecté
+      // 1. Récupérer le parcId de l'employé
       final uid = _auth.currentUser?.uid;
       if (uid == null) {
         return QrVerificationResult.erreur('Utilisateur non connecté.');
@@ -26,44 +27,32 @@ class QrService {
       }
 
       // 2. Récupérer le QR Code du jour depuis Firestore
-      final tablettDoc =
+      final tabletteDoc =
           await _firestore.collection('tablettes').doc(parcId).get();
-      if (!tablettDoc.exists) {
+      if (!tabletteDoc.exists) {
         return QrVerificationResult.erreur(
             'Aucune tablette configurée pour votre parc.');
       }
 
-      final qrCodeDuJour =
-          tablettDoc.data()?['qrCodeDuJour'] as String?;
+      final qrCodeDuJour = tabletteDoc.data()?['qrCodeDuJour'] as String?;
       if (qrCodeDuJour == null || qrCodeDuJour.isEmpty) {
+        return QrVerificationResult.erreur('QR Code du jour non disponible.');
+      }
+
+      // 3. Vérifier que le QR Code scanné = QR Code du jour
+      if (qrCodeScanne.trim() != qrCodeDuJour.trim()) {
+        return QrVerificationResult.erreur('QR Code invalide ou expiré.');
+      }
+
+      // 4. ✅ NOUVEAU — Vérifier que l'employé est physiquement dans la zone
+      final bool auBureau = await _locationService.estAuBureau();
+      if (!auBureau) {
         return QrVerificationResult.erreur(
-            'QR Code du jour non disponible.');
+            'QR Code valide mais vous n\'êtes pas détecté dans la zone du parc.\n'
+            'Connectez-vous au WiFi du parc ou soyez dans le périmètre.');
       }
 
-      // 3. Vérifier que le QR Code scanné correspond au QR Code du jour
-      if (qrCodeScanne != qrCodeDuJour) {
-        return QrVerificationResult.erreur(
-            'QR Code invalide ou expiré.');
-      }
-
-      // 4. Vérifier que la date encodée dans le QR Code est bien aujourd'hui
-      // Format attendu : ADN_{PARC_ID}_{DATE}_{SECRET}
-      final parties = qrCodeScanne.split('_');
-      if (parties.length < 4) {
-        return QrVerificationResult.erreur('Format QR Code invalide.');
-      }
-
-      final dateEncodee = parties[2]; // YYYY-MM-DD
-      final aujourdhui = DateTime.now();
-      final dateAttendue =
-          '${aujourdhui.year}-${aujourdhui.month.toString().padLeft(2, '0')}-${aujourdhui.day.toString().padLeft(2, '0')}';
-
-      if (dateEncodee != dateAttendue) {
-        return QrVerificationResult.erreur(
-            'Ce QR Code n\'est pas valide pour aujourd\'hui.');
-      }
-
-      // ✅ Tout est bon
+      // ✅ Tout est bon — QR Code + présence physique confirmés
       return QrVerificationResult.succes();
     } catch (e) {
       return QrVerificationResult.erreur('Erreur inattendue : $e');
@@ -71,7 +60,6 @@ class QrService {
   }
 }
 
-// Classe résultat de la vérification
 class QrVerificationResult {
   final bool valide;
   final String? messageErreur;

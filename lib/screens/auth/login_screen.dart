@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../models/user_model.dart';
 import '../employee/home_screen.dart';
-import '../admin/dashboard_screen.dart';
+import '../admin/web_admin_layout.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -38,7 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (user.role == 'admin') {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => DashboardScreen(currentUser: user)),
+          MaterialPageRoute(builder: (_) => WebAdminLayout(currentUser: user)),
         );
       } else {
         Navigator.pushReplacement(

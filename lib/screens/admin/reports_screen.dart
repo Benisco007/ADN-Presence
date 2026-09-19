@@ -1,16 +1,12 @@
-import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:open_filex/open_filex.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../services/export_service.dart';
+import '../../services/export_service.dart' if (dart.library.html) '../../services/export_service_web.dart';
+import '../../services/file_helper.dart' if (dart.library.html) '../../services/file_helper_web.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -27,22 +23,53 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _generateReport() async {
     if (_isGenerating) return;
     setState(() => _isGenerating = true);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '⏳ Génération en cours… La création des fichiers Excel et PDF peut prendre quelques instants. Veuillez garder la fenêtre ouverte.',
+                  style: TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          duration: Duration(minutes: 3),
+          backgroundColor: Color(0xFF1A73E8),
+        ),
+      );
+    }
+
     try {
       await ExportService().genererRapportSemaine();
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Rapport généré avec succès ✓'),
             backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
           ),
         );
       }
     } catch (error) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Génération impossible : $error'),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 5),
           ),
         );
       }
@@ -94,14 +121,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
     // Sur Android >= 10 (SDK 29+), on n'a plus besoin de WRITE_EXTERNAL_STORAGE
     // pour écrire dans /storage/emulated/0/Download.
     // Sur Android <= 9, on demande la permission.
-    if (!kIsWeb && Platform.isAndroid) {
-      final sdkInt = await _getAndroidSdkVersion();
-      if (sdkInt < 29) {
-        final status = await Permission.storage.request();
-        if (!status.isGranted) {
-          throw Exception('Permission de stockage refusée');
-        }
-      }
+    if (!kIsWeb) {
+      await FileHelper.requestStoragePermissionIfNeeded();
     }
 
     final response = await http.get(Uri.parse(url));
@@ -110,45 +131,28 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
 
     // Dossier Downloads accessible à l'utilisateur
-    final Directory dir;
-    if (!kIsWeb && Platform.isAndroid) {
-      dir = Directory('/storage/emulated/0/Download');
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-    } else {
-      dir = await getApplicationDocumentsDirectory();
-    }
+    final String dirPath = await FileHelper.getDownloadsDirectory();
 
     // On ajoute un timestamp au nom du fichier pour éviter les conflits d'écrasement (Permission denied)
     final String extension = nomFichier.contains('.') ? nomFichier.split('.').last : '';
     final String nomSansExt = nomFichier.contains('.') ? nomFichier.substring(0, nomFichier.lastIndexOf('.')) : nomFichier;
     final String nomUnique = '${nomSansExt}_${DateTime.now().millisecondsSinceEpoch}.$extension';
 
-    final String chemin = '${dir.path}/$nomUnique';
-    await File(chemin).writeAsBytes(response.bodyBytes);
+    final String chemin = '$dirPath/$nomUnique';
+    await FileHelper.saveFileBytes(chemin, response.bodyBytes);
     return chemin;
   }
 
-  /// Version Android SDK (retourne 0 si non Android)
-  Future<int> _getAndroidSdkVersion() async {
-    if (kIsWeb || !Platform.isAndroid) return 0;
-    try {
-      final result = await Process.run('getprop', ['ro.build.version.sdk']);
-      return int.tryParse((result.stdout as String).trim()) ?? 29;
-    } catch (_) {
-      return 29; // Assume moderne si on ne peut pas lire
-    }
-  }
-
-
   // ── Ouvrir un fichier local ──
   Future<void> _ouvrirFichier(String chemin) async {
-    final result = await OpenFilex.open(chemin);
-    if (result.type != ResultType.done && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Impossible d\'ouvrir : ${result.message}')),
-      );
+    try {
+      await FileHelper.openFile(chemin);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
     }
   }
 
@@ -164,7 +168,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         await _voirDansNavigateur(pdfUrl);
         return;
       }
-      final Directory tempDir = await getTemporaryDirectory();
+      final String tempDirPath = await FileHelper.getTemporaryDirPath();
       final String semStr =
           'S${data['semaine']}_${data['annee']}';
 
@@ -180,11 +184,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
         http.get(Uri.parse(pdfUrl)),
       ]);
 
-      final String excelPath = '${tempDir.path}/$excelNom';
-      final String pdfPath = '${tempDir.path}/$pdfNom';
+      final String excelPath = '$tempDirPath/$excelNom';
+      final String pdfPath = '$tempDirPath/$pdfNom';
 
-      await File(excelPath).writeAsBytes(results[0].bodyBytes);
-      await File(pdfPath).writeAsBytes(results[1].bodyBytes);
+      await FileHelper.saveFileBytes(excelPath, results[0].bodyBytes);
+      await FileHelper.saveFileBytes(pdfPath, results[1].bodyBytes);
 
       await Share.shareXFiles(
         [XFile(excelPath), XFile(pdfPath)],
@@ -428,9 +432,41 @@ class _ReportsScreenState extends State<ReportsScreen> {
           style: const TextStyle(color: Colors.white),
         ),
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: stream,
-        builder: (context, snapshot) {
+      body: Column(
+        children: [
+          if (_isGenerating)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.amber.shade100,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.amber.shade900,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '⏳ Génération du rapport en cours… Veuillez conserver cette fenêtre ouverte.',
+                      style: TextStyle(
+                        color: Colors.amber.shade900,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: stream,
+              builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -625,7 +661,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
           );
         },
       ),
-    );
+    ),
+  ],
+),
+);
   }
 
   Widget _badge(String label, Color color) {

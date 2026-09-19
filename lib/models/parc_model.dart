@@ -27,7 +27,7 @@ class ParcModel {
       wifiNom: map['wifiNom'] as String? ?? '',
       latitude: (map['latitude'] as num?)?.toDouble() ?? 0,
       longitude: (map['longitude'] as num?)?.toDouble() ?? 0,
-      rayon: (map['rayon'] as num?)?.toDouble() ?? 10,
+      rayon: (map['rayon'] as num?)?.toDouble() ?? 50,
       adminId: map['adminId'] as String? ?? '',
     );
   }

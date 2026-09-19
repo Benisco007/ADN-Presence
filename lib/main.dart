@@ -9,42 +9,12 @@ import 'firebase_options.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/employee/home_screen.dart';
 import 'screens/employee/signature_screen.dart';
-import 'screens/admin/dashboard_screen.dart';
+import 'screens/admin/web_admin_layout.dart';
 import 'models/user_model.dart';
-import 'services/export_service.dart';
-import 'services/foreground_service.dart';
+import 'services/export_service.dart' if (dart.library.html) 'services/export_service_stub.dart';
+import 'services/foreground_service.dart' if (dart.library.html) 'services/foreground_service_stub.dart';
+import 'services/background_service.dart' if (dart.library.html) 'services/background_service_stub.dart';
 
-
-@pragma('vm:entry-point')
-void callbackDispatcher() {
-  Workmanager().executeTask((task, inputData) async {
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      if (task == 'envoi_rapport_vendredi') {
-        await ExportService().envoyerMailHebdomadaire();
-      }
-    } catch (e) {
-      return Future.value(false);
-    }
-    return Future.value(true);
-  });
-}
-
-Duration _prochainVendredi() {
-  DateTime maintenant = DateTime.now();
-  int joursRestants = DateTime.friday - maintenant.weekday;
-  if (joursRestants <= 0) joursRestants += 7;
-  DateTime vendredi = DateTime(
-    maintenant.year,
-    maintenant.month,
-    maintenant.day + joursRestants,
-    18,
-    0,
-  );
-  return vendredi.difference(maintenant);
-}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,16 +35,7 @@ void main() async {
 
   if (!kIsWeb) {
     ForegroundPresenceService.initialiser();
-
-    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
-    await Workmanager().registerPeriodicTask(
-      'envoi_rapport_vendredi',
-      'envoi_rapport_vendredi',
-      frequency: const Duration(days: 7),
-      initialDelay: _prochainVendredi(),
-      constraints: Constraints(networkType: NetworkType.connected),
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
-    );
+    await BackgroundService.initialiser();
   }
 
   runApp(const MyApp());
@@ -169,7 +130,7 @@ class _SplashScreenState extends State<SplashScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-              builder: (_) => DashboardScreen(currentUser: userModel)),
+              builder: (_) => WebAdminLayout(currentUser: userModel)),
         );
       } else {
         Navigator.pushReplacement(

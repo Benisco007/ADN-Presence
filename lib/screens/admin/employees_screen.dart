@@ -188,6 +188,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                         [];
                     return DropdownButtonFormField<String>(
                       value: _selectedParcId,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Parc *',
                         prefixIcon: Icon(Icons.location_city),
@@ -196,7 +197,10 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                       items: parcs
                           .map((parc) => DropdownMenuItem(
                                 value: parc.id,
-                                child: Text(parc.nom),
+                                child: Text(
+                                  parc.nom,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ))
                           .toList(),
                       onChanged: (value) {
@@ -327,7 +331,12 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
             SizedBox(width: 8),
-            Text('Confirmer la suppression', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Confirmer la suppression',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         ),
         content: Text(
@@ -392,6 +401,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
           initialValue: parcs.any((parc) => parc.id == employe.parcId)
               ? employe.parcId
               : null,
+          isExpanded: true,
           decoration: const InputDecoration(
             labelText: 'Sélectionner un parc',
             border: OutlineInputBorder(),
@@ -399,7 +409,10 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
           items: parcs
               .map((parc) => DropdownMenuItem(
                     value: parc.id,
-                    child: Text(parc.nom),
+                    child: Text(
+                      parc.nom,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ))
               .toList(),
           onChanged: (value) {

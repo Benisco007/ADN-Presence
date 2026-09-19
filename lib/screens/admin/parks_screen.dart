@@ -35,7 +35,7 @@ class _ParksScreenState extends State<ParksScreen> {
     final longitudeController =
         TextEditingController(text: park?.longitude.toString());
     final radiusController =
-        TextEditingController(text: park?.rayon.toString() ?? '10');
+        TextEditingController(text: park?.rayon.toString() ?? '50');
 
     final values = await showDialog<Map<String, String>>(
       context: context,
@@ -156,8 +156,12 @@ class _ParksScreenState extends State<ParksScreen> {
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
             SizedBox(width: 8),
-            Text('Confirmer la suppression',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Confirmer la suppression',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         ),
         content: Text(

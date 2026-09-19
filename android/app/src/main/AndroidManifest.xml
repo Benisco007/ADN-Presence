@@ -1,21 +1,28 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- ── Localisation ── -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- ── WiFi ── -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- ── Démarrage automatique ── -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Permissions Foreground Service -->
+    <!-- ── Foreground Service ── -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Permissions Stockage -->
+    <!-- ── Stockage ── -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -46,20 +53,54 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground Service — stopWithTask=false empêche l'arrêt au swipe -->
+        <!--
+            Foreground Service de flutter_foreground_task.
+            - foregroundServiceType="location|dataSync" : accès GPS + réseau en background.
+            - stopWithTask="false" : survit au swipe de l'app.
+        -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="location"
+            android:foregroundServiceType="location|dataSync"
             android:stopWithTask="false"
             android:exported="false" />
 
-        <!-- Redémarrage automatique après reboot -->
+        <!--
+            WifiWatcherService : service Android autonome (START_STICKY) qui héberge
+            le WifiZoneReceiver. Il démarre avec l'app et reste vivant même après
+            le swipe, tant que le process Android tourne.
+            - stopWithTask="false" : ne meurt pas quand l'activité est swipée.
+        -->
+        <service
+            android:name=".WifiWatcherService"
+            android:stopWithTask="false"
+            android:exported="false" />
+
+        <!--
+            Redémarrage automatique après reboot ou mise à jour de l'app.
+            Géré par flutter_foreground_task (autoRunOnBoot: true dans les options).
+        -->
         <receiver
             android:name="com.pravera.flutter_foreground_task.receiver.TaskRestartReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            WifiZoneReceiver — déclaré dans le Manifest pour recevoir les broadcasts
+            APRÈS un reboot, quand MainActivity n'est pas encore lancée.
+            Note : sur Android 7+, CONNECTIVITY_CHANGE n'est PAS livré aux receivers
+            du Manifest — mais il l'est au receiver dynamique dans MainActivity/ForegroundService.
+            Ce bloc sert uniquement pour BOOT_COMPLETED qui redémarre le foreground service.
+        -->
+        <receiver
+            android:name=".WifiZoneReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.wifi.WIFI_STATE_CHANGED" />
+                <action android:name="android.net.wifi.STATE_CHANGE" />
             </intent-filter>
         </receiver>
 
@@ -74,4 +115,5 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
+
 </manifest>
